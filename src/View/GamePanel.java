@@ -1,53 +1,136 @@
 package View;
 
-import Model.*;
 import javax.swing.*;
 import java.awt.*;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.List;
 
-// Main game rendering panel and input handler
+/**
+ * VISTA PRINCIPAL - Maneja renderizado y entrada del usuario
+ * Implementa patrón MVC: no accede directamente al Modelo
+ */
 public class GamePanel extends JPanel implements java.awt.event.KeyListener {
-    // Starfield background
+    
+    // Interfaces MVC - Comunicación entre Vista y Controller
+    
+    /**
+     * Proveedor de datos: Controller -> Vista (solo lectura)
+     */
+    public interface GameDataProvider {
+        int getScore();                    // Current game score
+        int getLives();                    // Remaining lives
+        boolean isGameOver();              // Game over state
+        boolean isPaused();                // Pause state
+        boolean isInvincible();            // Ship invincibility state
+        int getHighScore();                // Highest score achieved
+        ShipData getShipData();            // Ship position and angle data
+        List<AsteroidData> getAsteroidData(); // All asteroid data for rendering
+        List<BulletData> getBulletData();      // All active bullet data
+        int getWindowWidth();              // Game window width
+        int getWindowHeight();             // Game window height
+        int getInitialLives();             // Starting number of lives
+    }
+    
+    /**
+     * Escuchador de entrada: Vista -> Controller
+     * Traduce teclas a comandos semánticos
+     */
+    public interface GameInputListener {
+        void onMoveLeft(boolean pressed);     // Left movement control
+        void onMoveRight(boolean pressed);    // Right movement control
+        void onThrust(boolean pressed);       // Forward thrust control
+        void onDecelerate(boolean pressed);   // Deceleration control
+        void onShoot(boolean pressed);        // Shooting control
+        void onRestart();                     // Restart game command
+        void onStartGame();                   // Start new game command
+        void onResume();                      // Resume from pause command
+        void onSettings();                    // Open settings command
+        void onExit();                        // Exit game command
+    }
+    
+    // DTOs inmutables para transferir datos entre capas MVC
+    
+    // Datos de nave para renderizado
+    public static class ShipData {
+        public final double x, y, angle;    // Position and rotation angle
+        public ShipData(double x, double y, double angle) {
+            this.x = x; this.y = y; this.angle = angle;
+        }
+    }
+    
+    // Datos de asteroide: posición, velocidad y tamaño
+    public static class AsteroidData {
+        public final double x, y, velocityX, velocityY;
+        public final int size;
+        public AsteroidData(double x, double y, double velocityX, double velocityY, int size) {
+            this.x = x; this.y = y; this.velocityX = velocityX; this.velocityY = velocityY; this.size = size;
+        }
+    }
+    
+    // Datos de bala: solo posición
+    public static class BulletData {
+        public final double x, y;
+        public BulletData(double x, double y) {
+            this.x = x; this.y = y;
+        }
+    }
+    
+    // Variables de comunicación MVC
+    private GameDataProvider gameDataProvider;
+    private GameInputListener gameInputListener;
+    
+    // Sistema de estrellas de fondo
     private static final int STAR_COUNT = 120;
     private final int[] starX = new int[STAR_COUNT];
     private final int[] starY = new int[STAR_COUNT];
     private final int[] starSize = new int[STAR_COUNT];
 
-    // Initialize star positions
-    private void initStars() {
-        int w = Model.GameState.Config.WINDOW_WIDTH;
-        int h = Model.GameState.Config.WINDOW_HEIGHT;
+    /**
+     * Initialize star positions for consistent starfield background.
+     * Uses fixed seed for consistent star placement across game sessions.
+     */
+    private void initStars(int windowWidth, int windowHeight) {
         java.util.Random rand = new java.util.Random(42); // fixed seed for consistency
         for (int i = 0; i < STAR_COUNT; i++) {
-            starX[i] = rand.nextInt(w);
-            starY[i] = rand.nextInt(h);
+            starX[i] = rand.nextInt(windowWidth);
+            starY[i] = rand.nextInt(windowHeight);
             starSize[i] = 1 + rand.nextInt(2); // 1 or 2 px
         }
     }
-    // Callback to start the game (set by controller)
-    private Runnable gameStartCallback;
+    
+    // UI state management
+    private boolean showStartOverlay = true;  // Controls start screen visibility
+    
+    // Cached fonts for better performance
+    private static final Font SCORE_FONT = new Font("Arial", Font.BOLD, 22);
 
-    // Show the start overlay before the game begins
-    private boolean showStartOverlay = true;
-
-    // Draw current score
+    /**
+     * Draw current score in top-left corner.
+     * Part of the HUD (Heads-Up Display) system.
+     */
     private void drawScore(Graphics g) {
-        g.setColor(Color.WHITE);
-        g.setFont(new Font("Arial", Font.BOLD, 22));
-        g.drawString("Score: " + gameState.score, 10, 30);
+        if (gameDataProvider == null) return;
+        Graphics2D g2 = (Graphics2D) g;
+        
+        // Enable anti-aliasing for smoother text
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        
+        g2.setColor(Color.WHITE);
+        g2.setFont(SCORE_FONT);
+        g2.drawString("Score: " + gameDataProvider.getScore(), 10, 30);
     }
 
     // Draw heart icons for lives
     private void drawHearts(Graphics g) {
+        if (gameDataProvider == null) return;
         int heartY = 50;
         int heartX = 10;
         int heartSize = 24;
-        for (int i = 0; i < HEART_COUNT; i++) {
-            Image heartImg = (i < gameState.lives)
+        int totalHearts = gameDataProvider.getInitialLives();
+        int currentLives = gameDataProvider.getLives();
+        for (int i = 0; i < totalHearts; i++) {
+            Image heartImg = (i < currentLives)
                     ? HEART_ICON
                     : GrayFilter.createDisabledImage(HEART_ICON);
             g.drawImage(heartImg, heartX + i * (heartSize + 6), heartY, heartSize, heartSize, null);
@@ -63,80 +146,97 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
         SHIP_ICON = new ImageIcon("resources/icons/ship.png").getImage();
         ASTEROID_ICON = new ImageIcon("resources/icons/asteroid.png").getImage();
     }
-    private static final int HEART_COUNT = Model.GameState.Config.INITIAL_LIVES;
-    private static final int GAME_OVER_Y = 300;
-    private static final int RESTART_Y = 350;
-    private GameState gameState;
-    private PauseMenuListener pauseMenuListener;
+    // Control de entrada - evita repetición de teclas
     private final Set<Integer> pressedKeys = new HashSet<>();
-    private final Map<Integer, Runnable> keyPressActions = new HashMap<>();
-    private final Map<Integer, Runnable> keyReleaseActions = new HashMap<>();
 
-    // Map keys to game actions
-    private void setupKeyActions() {
-        // Only WASD and space controls
-        keyPressActions.put(java.awt.event.KeyEvent.VK_A, () -> gameState.left = true);
-        keyPressActions.put(java.awt.event.KeyEvent.VK_D, () -> gameState.right = true);
-        keyPressActions.put(java.awt.event.KeyEvent.VK_W, () -> gameState.up = true);
-        keyPressActions.put(java.awt.event.KeyEvent.VK_SPACE, () -> gameState.shooting = true);
-        keyPressActions.put(java.awt.event.KeyEvent.VK_S, () -> gameState.ship.setDecelerating(true));
-        keyReleaseActions.put(java.awt.event.KeyEvent.VK_A, () -> gameState.left = false);
-        keyReleaseActions.put(java.awt.event.KeyEvent.VK_D, () -> gameState.right = false);
-        keyReleaseActions.put(java.awt.event.KeyEvent.VK_W, () -> gameState.up = false);
-        keyReleaseActions.put(java.awt.event.KeyEvent.VK_SPACE, () -> gameState.shooting = false);
-        keyReleaseActions.put(java.awt.event.KeyEvent.VK_S, () -> gameState.ship.setDecelerating(false));
-    }
-
+    // Procesa teclas presionadas y envía comandos al Controller
     @Override
     public void keyPressed(java.awt.event.KeyEvent e) {
         int code = e.getKeyCode();
-        // Allow restart with 'R' if game over
-        if (gameState.gameOver && code == java.awt.event.KeyEvent.VK_R) {
-            if (pauseMenuListener != null) pauseMenuListener.onRestart();
-            return;
+        if (!pressedKeys.add(code)) return; // Evitar repeticiones
+        
+        if (gameInputListener != null) {
+            // Allow restart with 'R' if game over
+            if (gameDataProvider != null && gameDataProvider.isGameOver() && code == java.awt.event.KeyEvent.VK_R) {
+                gameInputListener.onRestart();
+                return;
+            }
+            
+            // Don't process game controls if paused
+            if (gameDataProvider != null && gameDataProvider.isPaused()) return;
+            
+            // Process ship controls
+            switch (code) {
+                case java.awt.event.KeyEvent.VK_A:
+                    gameInputListener.onMoveLeft(true);
+                    break;
+                case java.awt.event.KeyEvent.VK_D:
+                    gameInputListener.onMoveRight(true);
+                    break;
+                case java.awt.event.KeyEvent.VK_W:
+                    gameInputListener.onThrust(true);
+                    break;
+                case java.awt.event.KeyEvent.VK_S:
+                    gameInputListener.onDecelerate(true);
+                    break;
+                case java.awt.event.KeyEvent.VK_SPACE:
+                    gameInputListener.onShoot(true);
+                    break;
+            }
         }
-        if (gameState.paused) return;
-        if (!pressedKeys.add(code)) return;
-        Runnable action = keyPressActions.get(code);
-        if (action != null) action.run();
     }
 
+    /**
+     * Handle key release events.
+     * Sends corresponding release commands to maintain proper input state.
+     * Important for continuous actions like movement and shooting.
+     */
     @Override
     public void keyReleased(java.awt.event.KeyEvent e) {
         int code = e.getKeyCode();
         pressedKeys.remove(code);
-        Runnable action = keyReleaseActions.get(code);
-        if (action != null) action.run();
+        
+        if (gameInputListener != null) {
+            // Process ship controls release
+            switch (code) {
+                case java.awt.event.KeyEvent.VK_A:
+                    gameInputListener.onMoveLeft(false);
+                    break;
+                case java.awt.event.KeyEvent.VK_D:
+                    gameInputListener.onMoveRight(false);
+                    break;
+                case java.awt.event.KeyEvent.VK_W:
+                    gameInputListener.onThrust(false);
+                    break;
+                case java.awt.event.KeyEvent.VK_S:
+                    gameInputListener.onDecelerate(false);
+                    break;
+                case java.awt.event.KeyEvent.VK_SPACE:
+                    gameInputListener.onShoot(false);
+                    break;
+            }
+        }
     }
 
     @Override
     public void keyTyped(java.awt.event.KeyEvent e) {
         // Not used
     }
-    
-    // Listener for pause menu actions
-    public interface PauseMenuListener {
-        void onResume();
-        void onRestart();
-        void onSettings();
-    }
-    public void setPauseMenuListener(PauseMenuListener listener) {
-        this.pauseMenuListener = listener;
-    }
 
     // Set up panel, input, and mouse handling
-    public void setGameStartCallback(Runnable callback) {
-        this.gameStartCallback = callback;
+    public void setGameDataProvider(GameDataProvider provider) {
+        this.gameDataProvider = provider;
+    }
+    
+    public void setGameInputListener(GameInputListener listener) {
+        this.gameInputListener = listener;
     }
 
-    public GamePanel(GameState gameState) {
-        this.gameState = gameState;
-        setPreferredSize(new Dimension(Model.GameState.Config.WINDOW_WIDTH, Model.GameState.Config.WINDOW_HEIGHT));
-        setBackground(Color.BLACK);
-        initStars();
-        setFocusable(true);
-        addKeyListener(this);
-        setupKeyActions();
+    // Constructor: configura panel, input y eventos
+    public GamePanel() {
+        setBackground(Color.BLACK);  // Space-like black background
+        setFocusable(true);          // Required for keyboard input
+        addKeyListener(this);        // Register for key events
         addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mousePressed(java.awt.event.MouseEvent e) {
@@ -153,58 +253,55 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
                     // Big START button
                     if (mx >= centerX - 120 && mx <= centerX + 120 && my >= buttonY - 40 && my <= buttonY + 20) {
                         showStartOverlay = false;
-                        if (gameStartCallback != null) gameStartCallback.run();
+                        if (gameInputListener != null) gameInputListener.onStartGame();
                         repaint();
                         return;
                     }
                 }
-                if (gameState.paused && pauseMenuListener != null) {
-                    int mx = e.getX();
-                    int my = e.getY();
-                    int centerX = getWidth() / 2;
-                    int y = 320;
-                    // Resume button
-                    if (mx >= centerX - 100 && mx <= centerX + 100 && my >= y - 30 && my <= y + 10) {
-                        pauseMenuListener.onResume();
-                        return;
-                    }
-                    y += 50;
-                    // Restart button
-                    if (mx >= centerX - 100 && mx <= centerX + 100 && my >= y - 30 && my <= y + 10) {
-                        pauseMenuListener.onRestart();
-                        return;
-                    }
-                    y += 50;
-                    // Settings button
-                    if (mx >= centerX - 100 && mx <= centerX + 100 && my >= y - 30 && my <= y + 10) {
-                        pauseMenuListener.onSettings();
-                        return;
-                    }
+                // Handle pause menu clicks
+                if (gameDataProvider != null && gameDataProvider.isPaused()) {
+                    handlePauseMenuClick(e.getX(), e.getY());
+                    return;
                 }
             }
         });
     }
+    
+    // Debe ser llamado por el controller después de configurar providers
+    public void initialize(int windowWidth, int windowHeight) {
+        setPreferredSize(new Dimension(windowWidth, windowHeight));
+        initStars(windowWidth, windowHeight);
+    }
 
-    // Main rendering method
+    // Método principal de renderizado - dibuja todo el juego
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
+        if (gameDataProvider == null) return;
+        
         // Draw starfield background
         g.setColor(Color.WHITE);
         for (int i = 0; i < STAR_COUNT; i++) {
             g.fillRect(starX[i], starY[i], starSize[i], starSize[i]);
         }
-        // Flicker effect for invincibility
-        if (!gameState.invincible || ((System.currentTimeMillis() / 100) % 2 == 0)) {
-            drawShip(g, gameState.ship);
-        }
-        drawAsteroids(g, gameState.asteroids);
-        drawBullets(g, gameState.bullets);
+        
+        // Draw HUD first (less prone to flickering)
         drawScore(g);
         drawHearts(g);
-        if (gameState.gameOver) drawGameOverOverlay(g);
-        if (gameState.paused) drawPauseOverlay(g);
+        
+        // Flicker effect for invincibility
+        if (!gameDataProvider.isInvincible() || ((System.currentTimeMillis() / 100) % 2 == 0)) {
+            drawShip(g, gameDataProvider.getShipData());
+        }
+        drawAsteroids(g, gameDataProvider.getAsteroidData());
+        drawBullets(g, gameDataProvider.getBulletData());
+        if (gameDataProvider.isGameOver()) drawGameOverOverlay(g);
         if (showStartOverlay) drawStartOverlay(g);
+        
+        // Draw pause menu if needed
+        if (gameDataProvider.isPaused()) {
+            drawPauseMenu(g);
+        }
     }
 
     // Draw a blurry/translucent overlay for GAME OVER
@@ -240,58 +337,14 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
         // Instructions
         g2.setFont(new Font("Arial", Font.PLAIN, 20));
         g2.setColor(Color.WHITE);
-        String instr = "Use arrow keys or WASD to move. Space to shoot.";
+        String instr = "Use WASD to move. Space to shoot.";
         int instrWidth = g2.getFontMetrics().stringWidth(instr);
         g2.drawString(instr, (getWidth() - instrWidth) / 2, buttonY + 60);
     }
 
-    // Draw the pause menu overlay
-    private void drawPauseOverlay(Graphics g) {
-        Graphics2D g2 = (Graphics2D) g;
-        // Draw translucent overlay
-        g2.setColor(new Color(0, 0, 0, 180));
-        g2.fillRect(0, 0, getWidth(), getHeight());
-        // Draw pause menu
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("Arial", Font.BOLD, 40));
-        String pauseMsg = "PAUSED";
-        int pauseWidth = g2.getFontMetrics().stringWidth(pauseMsg);
-        g2.drawString(pauseMsg, (getWidth() - pauseWidth) / 2, 200);
-        g2.setFont(new Font("Arial", Font.BOLD, 24));
-        String scoreMsg = "Score: " + gameState.score;
-        int scoreWidth = g2.getFontMetrics().stringWidth(scoreMsg);
-        g2.drawString(scoreMsg, (getWidth() - scoreWidth) / 2, 250);
-
-        // Draw buttons (visual only, not interactive here)
-        String resumeMsg = "Resume";
-        String restartMsg = "Restart";
-        String settingsMsg = "Settings";
-        int y = 320;
-        int resumeWidth = g2.getFontMetrics().stringWidth(resumeMsg);
-        int restartWidth = g2.getFontMetrics().stringWidth(restartMsg);
-        int settingsWidth = g2.getFontMetrics().stringWidth(settingsMsg);
-        g2.setColor(Color.LIGHT_GRAY);
-        g2.fillRoundRect((getWidth() - 200) / 2, y - 30, 200, 40, 20, 20);
-        g2.setColor(Color.BLACK);
-        g2.drawString(resumeMsg, (getWidth() - resumeWidth) / 2, y);
-        y += 50;
-        g2.setColor(Color.LIGHT_GRAY);
-        g2.fillRoundRect((getWidth() - 200) / 2, y - 30, 200, 40, 20, 20);
-        g2.setColor(Color.BLACK);
-        g2.drawString(restartMsg, (getWidth() - restartWidth) / 2, y);
-        y += 50;
-        g2.setColor(Color.LIGHT_GRAY);
-        g2.fillRoundRect((getWidth() - 200) / 2, y - 30, 200, 40, 20, 20);
-        g2.setColor(Color.BLACK);
-        g2.drawString(settingsMsg, (getWidth() - settingsWidth) / 2, y);
-
-        // Draw high score at the bottom
-        g2.setFont(new Font("Arial", Font.BOLD, 22));
-        String highScoreMsg = "Highscore: " + gameState.getHighScore();
-        int highScoreWidth = g2.getFontMetrics().stringWidth(highScoreMsg);
-        g2.setColor(Color.WHITE);
-        g2.drawString(highScoreMsg, (getWidth() - highScoreWidth) / 2, getHeight() - 40);
-    }
+    // Game over and restart message Y positions
+    private static final int GAME_OVER_Y = 220;
+    private static final int RESTART_Y = 270;
 
     // Draw the game over message
     private void drawGameOver(Graphics g) {
@@ -299,15 +352,16 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
         g.setFont(new Font("Arial", Font.BOLD, 48));
         String msg = "GAME OVER";
         int msgWidth = g.getFontMetrics().stringWidth(msg);
-        g.drawString(msg, (Model.GameState.Config.WINDOW_WIDTH - msgWidth) / 2, GAME_OVER_Y);
+        g.drawString(msg, (getWidth() - msgWidth) / 2, GAME_OVER_Y);
         g.setFont(new Font("Arial", Font.BOLD, 24));
         String restartMsg = "Press R to restart";
         int restartWidth = g.getFontMetrics().stringWidth(restartMsg);
-        g.drawString(restartMsg, (Model.GameState.Config.WINDOW_WIDTH - restartWidth) / 2, RESTART_Y);
+        g.drawString(restartMsg, (getWidth() - restartWidth) / 2, RESTART_Y);
     }
 
-    // Draw the ship icon at its position and angle
-    private void drawShip(Graphics g, Ship ship) {
+    // Dibuja nave con rotación (puede parpadear si es invencible)
+    private void drawShip(Graphics g, ShipData ship) {
+        if (ship == null) return;
         Graphics2D g2 = (Graphics2D) g;
         int iconW = 32, iconH = 32;
         g2.translate(ship.x, ship.y);
@@ -317,10 +371,11 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
         g2.translate(-ship.x, -ship.y);
     }
 
-    // Draw all asteroids
-    private void drawAsteroids(Graphics g, List<Asteroid> asteroids) {
+    // Dibuja asteroides con rotación según dirección de movimiento
+    private void drawAsteroids(Graphics g, List<AsteroidData> asteroids) {
+        if (asteroids == null) return;
         Graphics2D g2 = (Graphics2D) g;
-        for (Asteroid a : asteroids) {
+        for (AsteroidData a : asteroids) {
             int iconW = a.size * 2;
             int iconH = a.size * 2;
             double angle = Math.atan2(a.velocityY, a.velocityX);
@@ -332,11 +387,104 @@ public class GamePanel extends JPanel implements java.awt.event.KeyListener {
         }
     }
 
-    // Draw all bullets
-    private void drawBullets(Graphics g, List<Bullet> bullets) {
-        g.setColor(Color.MAGENTA);
-        for (Bullet b : bullets) {
+    // Dibuja balas como círculos cian
+    private void drawBullets(Graphics g, List<BulletData> bullets) {
+        if (bullets == null) return;
+        g.setColor(Color.CYAN);
+        for (BulletData b : bullets) {
             g.fillOval((int) b.x - 2, (int) b.y - 2, 4, 4);
         }
+    }
+    
+    // Maneja clics en menú de pausa
+    private void handlePauseMenuClick(int x, int y) {
+        if (gameInputListener == null) return;
+        
+        int centerX = getWidth() / 2;
+        int buttonY = 320;
+        
+        // Resume button
+        if (x >= centerX - 100 && x <= centerX + 100 && y >= buttonY - 30 && y <= buttonY + 10) {
+            gameInputListener.onResume();
+            return;
+        }
+        buttonY += 50;
+        
+        // Restart button
+        if (x >= centerX - 100 && x <= centerX + 100 && y >= buttonY - 30 && y <= buttonY + 10) {
+            gameInputListener.onRestart();
+            return;
+        }
+        buttonY += 50;
+        
+        // Settings button
+        if (x >= centerX - 100 && x <= centerX + 100 && y >= buttonY - 30 && y <= buttonY + 10) {
+            gameInputListener.onSettings();
+            return;
+        }
+        buttonY += 50;
+        
+        // Exit button
+        if (x >= centerX - 100 && x <= centerX + 100 && y >= buttonY - 30 && y <= buttonY + 10) {
+            gameInputListener.onExit();
+        }
+    }
+
+    /**
+     * Draw pause menu overlay with translucent background.
+     * Creates a modal-like interface over the game without stopping the timer.
+     * Shows current score, high score, and action buttons.
+     */
+    private void drawPauseMenu(Graphics g) {
+        Graphics2D g2 = (Graphics2D) g;
+        
+        // Draw translucent overlay
+        g2.setColor(new Color(0, 0, 0, 180));
+        g2.fillRect(0, 0, getWidth(), getHeight());
+        
+        // Draw pause title
+        g2.setColor(Color.WHITE);
+        g2.setFont(new Font("Arial", Font.BOLD, 40));
+        String pauseMsg = "PAUSED";
+        int pauseWidth = g2.getFontMetrics().stringWidth(pauseMsg);
+        g2.drawString(pauseMsg, (getWidth() - pauseWidth) / 2, 200);
+        
+        // Draw current score
+        g2.setFont(new Font("Arial", Font.BOLD, 24));
+        String scoreMsg = "Score: " + gameDataProvider.getScore();
+        int scoreWidth = g2.getFontMetrics().stringWidth(scoreMsg);
+        g2.drawString(scoreMsg, (getWidth() - scoreWidth) / 2, 250);
+        
+        // Draw menu buttons
+        drawPauseButton(g2, "Resume", 320);
+        drawPauseButton(g2, "Restart", 370);
+        drawPauseButton(g2, "Settings", 420);
+        drawPauseButton(g2, "Exit", 470);
+        
+        // Draw high score at the bottom
+        g2.setFont(new Font("Arial", Font.BOLD, 22));
+        String highScoreMsg = "Highscore: " + gameDataProvider.getHighScore();
+        int highScoreWidth = g2.getFontMetrics().stringWidth(highScoreMsg);
+        g2.setColor(Color.WHITE);
+        g2.drawString(highScoreMsg, (getWidth() - highScoreWidth) / 2, getHeight() - 40);
+    }
+    
+    /**
+     * Draw a pause menu button with background and text.
+     * Helper method to maintain consistent button appearance.
+     * @param g2 Graphics context for drawing
+     * @param text Button text to display
+     * @param y Vertical position of the button
+     */
+    private void drawPauseButton(Graphics2D g2, String text, int y) {
+        int textWidth = g2.getFontMetrics().stringWidth(text);
+        
+        // Draw button background
+        g2.setColor(Color.LIGHT_GRAY);
+        g2.fillRoundRect((getWidth() - 200) / 2, y - 30, 200, 40, 20, 20);
+        
+        // Draw button text
+        g2.setColor(Color.BLACK);
+        g2.drawString(text, (getWidth() - textWidth) / 2, y);
     }
 }

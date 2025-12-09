@@ -1,5 +1,9 @@
 package Model;
 
+/**
+ * ENTIDAD ASTEROIDE - OBSTÁCULO MÓVIL DEL JUEGO
+ * ==============================================
+ */
 public class Asteroid extends Thread {
     public double x, y;
     public double velocityX, velocityY;

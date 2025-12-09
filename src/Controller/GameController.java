@@ -7,34 +7,46 @@ import java.awt.event.*;
 import View.GamePanel;
 import View.ControlPanel;
 import java.awt.*;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
- * GameController manages the main game loop, UI, and user interactions for the Asteroids game.
- * It wires together the Model (GameState), View (GamePanel, ControlPanel), and handles events.
+ * PATRÓN MVC - CONTROLADOR PRINCIPAL DEL JUEGO
+ * ============================================
  */
-public class GameController implements ActionListener {
-    // Remove PlayScreenPanel, use overlay in GamePanel
-    // Core game state (model)
+public class GameController implements ActionListener, GamePanel.GameDataProvider, GamePanel.GameInputListener {
+    // ========================================================================
+    // COMPONENTES DEL PATRÓN MVC
+    // ========================================================================
+    
+    // MODELO - Contiene toda la lógica y estado del juego
     private GameState gameState;
-    // Main game display (view)
-    private GamePanel panel;
-    // Control panel for asteroid settings (view)
-    private ControlPanel controlPanel;
-    // Main application window
-    private JFrame frame;
-    // Game loop timer (~60 FPS)
-    public Timer timer;
-    // Callback to trigger repaint
-    private Runnable repaintCallback;
-    // Pause button in the UI
-    private JButton pauseButton;
+    
+    // VISTAS - Componentes de interfaz de usuario
+    private GamePanel panel;          // Pantalla principal del juego
+    private ControlPanel controlPanel; // Panel de configuración de asteroides
+    
+    // INFRAESTRUCTURA DE UI
+    private JFrame frame;              // Ventana principal de la aplicación
+    private JButton pauseButton;       // Botón flotante de pausa
+    
+    // SISTEMA DE GAME LOOP
+    public Timer timer;                // Timer para 60 FPS (~16ms por frame)
+    private Runnable repaintCallback;  // Callback para redibujar la pantalla
 
-    // Initial asteroid settings (defaults)
-    private static final int INIT_MIN_ASTEROID_SIZE = 20;
-    private static final int INIT_MAX_ASTEROID_SIZE = 60;
-    private static final double INIT_MIN_ASTEROID_SPEED = 0.5;
-    private static final double INIT_MAX_ASTEROID_SPEED = 2.5;
-    // Color for pause button (semi-transparent white)
+    // ========================================================================
+    // CONFIGURACIÓN INICIAL DEL JUEGO
+    // ========================================================================
+    
+    // VALORES POR DEFECTO PARA ASTEROIDES
+    // Estos valores se pueden cambiar durante el juego a través del ControlPanel
+    private static final int INIT_MIN_ASTEROID_SIZE = 20;      // Tamaño mínimo de asteroide
+    private static final int INIT_MAX_ASTEROID_SIZE = 60;      // Tamaño máximo de asteroide
+    private static final double INIT_MIN_ASTEROID_SPEED = 0.5; // Velocidad mínima
+    private static final double INIT_MAX_ASTEROID_SPEED = 2.5; // Velocidad máxima
+    
+    // ESTILO VISUAL
+    // Color semi-transparente para el botón de pausa flotante
     private static final java.awt.Color PAUSE_BUTTON_COLOR = new java.awt.Color(255,255,255,200);
 
     /**
@@ -43,7 +55,11 @@ public class GameController implements ActionListener {
     public GameController() {
         // Initialize model and views
         gameState = new GameState();
-        panel = new GamePanel(gameState);
+        panel = new GamePanel();
+        panel.setGameDataProvider(this);
+        panel.setGameInputListener(this);
+        panel.initialize(gameState.getWindowWidth(), gameState.getWindowHeight());
+        
         panel.setLayout(null); // Set absolute layout before adding components
         controlPanel = new ControlPanel(INIT_MIN_ASTEROID_SIZE, INIT_MAX_ASTEROID_SIZE, INIT_MIN_ASTEROID_SPEED, INIT_MAX_ASTEROID_SPEED);
         controlPanel.setVisible(false);
@@ -63,7 +79,7 @@ public class GameController implements ActionListener {
         pauseButton.setFocusable(false);
         // Place in top right, accounting for button size and panel width
         int btnWidth = 60, btnHeight = 40;
-        pauseButton.setBounds(Model.GameState.Config.WINDOW_WIDTH - btnWidth - 10, 10, btnWidth, btnHeight);
+        pauseButton.setBounds(gameState.getWindowWidth() - btnWidth - 10, 10, btnWidth, btnHeight);
         panel.add(pauseButton);
 
         // Use a container panel for the game (game panel + control panel)
@@ -71,14 +87,11 @@ public class GameController implements ActionListener {
         gameContainer.add(panel, BorderLayout.CENTER);
         gameContainer.add(controlPanel, BorderLayout.SOUTH);
 
-
-        // Use a container panel for the game (game panel + control panel)
         frame.setContentPane(gameContainer);
         frame.pack();
         frame.setResizable(false);
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
-
 
         // Set up repaint callback and game loop timer
         repaintCallback = panel::repaint;
@@ -86,21 +99,8 @@ public class GameController implements ActionListener {
         panel.setFocusable(true);
         panel.requestFocusInWindow();
 
-        // Pass a callback to GamePanel to start the game after clicking START overlay
-        panel.setGameStartCallback(() -> {
-            timer.start();
-            gameState.startAsteroidSpawner();
-            panel.requestFocusInWindow();
-        });
-
         // Hide pause button when paused
         gameState.paused = false;
-        panel.addPropertyChangeListener(evt -> {
-            if ("paused".equals(evt.getPropertyName())) {
-                boolean paused = (boolean) evt.getNewValue();
-                pauseButton.setVisible(!paused);
-            }
-        });
 
         // Pause button event: pause the game
         pauseButton.addActionListener(e -> {
@@ -108,45 +108,6 @@ public class GameController implements ActionListener {
             gameState.setPaused(true);
             pauseButton.setVisible(false);
             panel.repaint();
-        });
-
-        // Set up pause menu actions (resume, restart, settings)
-        panel.setPauseMenuListener(new View.GamePanel.PauseMenuListener() {
-            @Override
-            public void onResume() {
-                // Resume the game from pause
-                controlPanel.setVisible(false);
-                gameState.setPaused(false);
-                pauseButton.setVisible(true);
-                timer.start();
-                panel.repaint();
-            }
-            @Override
-            public void onRestart() {
-                // Reset game state to initial values
-                controlPanel.setVisible(false);
-                gameState.ship.x = Model.GameState.Config.SHIP_START_X;
-                gameState.ship.y = Model.GameState.Config.SHIP_START_Y;
-                gameState.ship.velocityX = 0;
-                gameState.ship.velocityY = 0;
-                gameState.lives = Model.GameState.Config.INITIAL_LIVES;
-                gameState.score = 0;
-                gameState.gameOver = false;
-                gameState.invincible = false;
-                gameState.bullets.clear();
-                gameState.spawnAsteroids();
-                gameState.startAsteroidSpawner();
-                gameState.setPaused(false);
-                pauseButton.setVisible(true);
-                timer.start();
-                panel.repaint();
-            }
-            @Override
-            public void onSettings() {
-                // Show the asteroid settings control panel
-                controlPanel.setVisible(true);
-                panel.requestFocusInWindow();
-            }
         });
 
         // Apply new asteroid settings from the control panel
@@ -169,6 +130,128 @@ public class GameController implements ActionListener {
             panel.requestFocusInWindow();
             controlPanel.setVisible(false);
         });
+    }
+    
+    // Implementación de GameDataProvider
+    @Override
+    public int getScore() { return gameState.score; }
+    
+    @Override
+    public int getLives() { return gameState.lives; }
+    
+    @Override
+    public boolean isGameOver() { return gameState.gameOver; }
+    
+    @Override
+    public boolean isPaused() { return gameState.paused; }
+    
+    @Override
+    public boolean isInvincible() { return gameState.invincible; }
+    
+    @Override
+    public int getHighScore() { return gameState.getHighScore(); }
+    
+    @Override
+    public GamePanel.ShipData getShipData() {
+        return new GamePanel.ShipData(gameState.ship.x, gameState.ship.y, gameState.ship.angle);
+    }
+    
+    @Override
+    public List<GamePanel.AsteroidData> getAsteroidData() {
+        return gameState.asteroids.stream()
+            .map(a -> new GamePanel.AsteroidData(a.x, a.y, a.velocityX, a.velocityY, a.size))
+            .collect(Collectors.toList());
+    }
+    
+    @Override
+    public List<GamePanel.BulletData> getBulletData() {
+        return gameState.bullets.stream()
+            .filter(b -> b.active)
+            .map(b -> new GamePanel.BulletData(b.x, b.y))
+            .collect(Collectors.toList());
+    }
+    
+    @Override
+    public int getWindowWidth() { return Model.GameState.Config.WINDOW_WIDTH; }
+    
+    @Override
+    public int getWindowHeight() { return Model.GameState.Config.WINDOW_HEIGHT; }
+    
+    @Override
+    public int getInitialLives() { return Model.GameState.Config.INITIAL_LIVES; }
+    
+    // Implementación de GameInputListener
+    @Override
+    public void onMoveLeft(boolean pressed) {
+        gameState.left = pressed;
+    }
+    
+    @Override
+    public void onMoveRight(boolean pressed) {
+        gameState.right = pressed;
+    }
+    
+    @Override
+    public void onThrust(boolean pressed) {
+        gameState.up = pressed;
+    }
+    
+    @Override
+    public void onDecelerate(boolean pressed) {
+        gameState.ship.setDecelerating(pressed);
+    }
+    
+    @Override
+    public void onShoot(boolean pressed) {
+        gameState.shooting = pressed;
+    }
+    
+    @Override
+    public void onStartGame() {
+        timer.start();
+        gameState.startAsteroidSpawner();
+        panel.requestFocusInWindow();
+    }
+    
+    @Override
+    public void onResume() {
+        controlPanel.setVisible(false);
+        gameState.setPaused(false);
+        pauseButton.setVisible(true);
+        timer.start();
+        panel.repaint();
+    }
+    
+    @Override
+    public void onRestart() {
+        controlPanel.setVisible(false);
+        gameState.ship.x = Model.GameState.Config.SHIP_START_X;
+        gameState.ship.y = Model.GameState.Config.SHIP_START_Y;
+        gameState.ship.velocityX = 0;
+        gameState.ship.velocityY = 0;
+        gameState.lives = Model.GameState.Config.INITIAL_LIVES;
+        gameState.score = 0;
+        gameState.gameOver = false;
+        gameState.invincible = false;
+        gameState.bullets.clear();
+        gameState.spawnAsteroids();
+        gameState.startAsteroidSpawner();
+        gameState.setPaused(false);
+        pauseButton.setVisible(true);
+        timer.start();
+        panel.repaint();
+    }
+    
+    @Override
+    public void onSettings() {
+        controlPanel.setVisible(true);
+        panel.requestFocusInWindow();
+    }
+    
+    @Override
+    public void onExit() {
+        cleanupOnExit();
+        System.exit(0);
     }
 
     /**

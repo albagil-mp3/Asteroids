@@ -1,0 +1,24 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "App",
+            "request": "launch",
+            "mainClass": "App",
+            "projectName": "Asteroids_b9ab251c"
+        },
+        {
+            "type": "java",
+            "name": "Run Asteroids Game",
+            "request": "launch",
+            "mainClass": "App",
+            "projectName": "Asteroids",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "console": "internalConsole",
+            "stopOnEntry": false,
+            "preLaunchTask": "compile-java"
+        }
+    ]
+}

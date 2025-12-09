@@ -5,7 +5,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-// Main game state and logic for Asteroids
+/**
+ * PATRÓN MVC - MODELO DEL JUEGO
+ * =============================
+ */
 public class GameState {
     // --- Helper methods for collision and respawn logic ---
     // Handle bullet-asteroid collisions, scoring, and asteroid splitting
@@ -250,6 +253,15 @@ public class GameState {
     // Get current high score
     public int getHighScore() {
         return highScore;
+    }
+    
+    // Get window dimensions for MVC communication
+    public int getWindowWidth() {
+        return Config.WINDOW_WIDTH;
+    }
+    
+    public int getWindowHeight() {
+        return Config.WINDOW_HEIGHT;
     }
 
     // Load high score from file
